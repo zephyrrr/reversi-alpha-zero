@@ -1,6 +1,6 @@
 class EvaluateConfig:
     def __init__(self):
-        self.game_num = 200  # 400
+        self.game_num = 200
         self.replace_rate = 0.55
         self.play_config = PlayConfig()
         self.play_config.simulation_num_per_move = 400
@@ -13,34 +13,31 @@ class EvaluateConfig:
 
 class PlayDataConfig:
     def __init__(self):
-        # Max Training Data Size = nb_game_in_file * max_file_num * 8
-        self.nb_game_in_file = 5
-        self.max_file_num = 300
+        self.nb_game_in_file = 100
+        self.max_file_num = 2000
         self.save_policy_of_tau_1 = True
 
 
 class PlayConfig:
     def __init__(self):
-        self.simulation_num_per_move = 100
-        self.share_mtcs_info_in_self_play = True
+        self.max_processes = 3
+        self.search_threads = 16
+        self.simulation_num_per_move = 400
         self.thinking_loop = 1
         self.logging_thinking = False
         self.c_puct = 1
         self.noise_eps = 0.25
         self.dirichlet_alpha = 0.5
-        self.dirichlet_noise_only_for_legal_moves = True
-        self.change_tau_turn = 3
+        self.change_tau_turn = 10
         self.virtual_loss = 3
         self.prediction_queue_size = 16
         self.parallel_search_num = 8
         self.prediction_worker_sleep_sec = 0.0001
         self.wait_for_expanding_sleep_sec = 0.00001
         self.resign_threshold = -0.9
-        self.allowed_resign_turn = 20
-        self.disable_resignation_rate = 0.1
+        self.disable_resignation_rate = 1
         self.false_positive_threshold = 0.05
         self.resign_threshold_delta = 0.01
-
         # True means evaluating 'AlphaZero' method (disable 'eval' worker).
         # Please change to False if you want to evaluate 'AlphaGo Zero' method.
         self.use_newest_next_generation_model = True
@@ -48,18 +45,13 @@ class PlayConfig:
 
 class TrainerConfig:
     def __init__(self):
-        self.batch_size = 512  # 2048
+        self.batch_size = 64  # 2048
         self.min_data_size_to_learn = 100000
         self.epoch_to_checkpoint = 1
         self.start_total_steps = 0
-        self.save_model_steps = 200
+        self.save_model_steps = 2000
+        #self.load_data_steps = 5000
         self.use_tensorboard = True
-        self.logging_per_steps = 100
-        self.lr_schedules = [
-            (0, 0.01),
-            (300000, 0.001),
-            (600000, 0.0001),
-        ]
 
 
 class ModelConfig:

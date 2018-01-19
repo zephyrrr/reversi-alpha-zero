@@ -1,8 +1,12 @@
 import os
+from collections import deque
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from logging import getLogger
-from random import random
+from multiprocessing import Manager
+from threading import Thread
 from time import time
+from random import random
 
 from reversi_zero.agent.player import ReversiPlayer
 from reversi_zero.config import Config
@@ -17,7 +21,7 @@ logger = getLogger(__name__)
 
 
 def start(config: Config):
-    tf_util.set_session_config(per_process_gpu_memory_fraction=0.3)
+    tf_util.set_session_config(per_process_gpu_memory_fraction=0.1, allow_growth=True)
     return SelfPlayWorker(config, env=ReversiEnv()).start()
 
 
@@ -55,6 +59,7 @@ class SelfPlayWorker:
             logger.debug(f"play game {idx} time={end_time - start_time} sec, "
                          f"turn={env.turn}:{env.board.number_of_black_and_white}:{env.winner}")
 
+
             if self.config.play.use_newest_next_generation_model:
                 model_changed = reload_newest_next_generation_model_if_changed(self.model, clear_session=True)
             else:
@@ -65,20 +70,22 @@ class SelfPlayWorker:
 
             idx += 1
 
-    def start_game(self, idx, mtcs_info):
+
+    def start_game(self, idx):
         self.env.reset()
         enable_resign = self.config.play.disable_resignation_rate <= random()
         self.black = ReversiPlayer(self.config, self.model, enable_resign=enable_resign, mtcs_info=mtcs_info)
         self.white = ReversiPlayer(self.config, self.model, enable_resign=enable_resign, mtcs_info=mtcs_info)
-        if not enable_resign:
-            logger.debug("Resignation is disabled in the next game.")
+        #self.black.reset(enable_resign)
+        #self.white.reset(enable_resign)
+        #if not enable_resign:
+        #    logger.debug("Resignation is disabled in the next game.")
         observation = self.env.observation  # type: Board
         while not self.env.done:
-            # logger.debug(f"turn={self.env.turn}")
             if self.env.next_player == Player.black:
-                action = self.black.action(observation.black, observation.white)
+                action = self.black.action(self.env.get_board_data(False))
             else:
-                action = self.white.action(observation.white, observation.black)
+                action = self.white.action(self.env.get_board_data(True))
             observation, info = self.env.step(action)
         self.finish_game(resign_enabled=enable_resign)
         self.save_play_data(write=idx % self.config.play_data.nb_game_in_file == 0)
@@ -88,7 +95,6 @@ class SelfPlayWorker:
     def save_play_data(self, write=True):
         data = self.black.moves + self.white.moves
         self.buffer += data
-
         if not write:
             return
 
@@ -119,6 +125,7 @@ class SelfPlayWorker:
 
         self.black.finish_game(black_win)
         self.white.finish_game(-black_win)
+        return
 
         if not resign_enabled:
             self.resign_test_game_count += 1

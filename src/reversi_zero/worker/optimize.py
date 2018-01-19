@@ -5,24 +5,27 @@ from time import sleep
 
 import keras.backend as K
 import numpy as np
-from keras.callbacks import Callback
-from keras.optimizers import SGD
+from keras.callbacks import LambdaCallback, Callback
+from keras.optimizers import SGD, Adam
 
 from reversi_zero.agent.model import ReversiModel, objective_function_for_policy, \
     objective_function_for_value
 from reversi_zero.config import Config
+from reversi_zero.env.reversi_env import ReversiEnv, Player, Board
+
 from reversi_zero.lib import tf_util
 from reversi_zero.lib.bitboard import bit_to_array
 from reversi_zero.lib.data_helper import get_game_data_filenames, read_game_data_from_file, \
     get_next_generation_model_dirs
 from reversi_zero.lib.model_helpler import load_best_model_weight
 from reversi_zero.lib.tensorboard_step_callback import TensorBoardStepCallback
+from reversi_zero.env.reversi_env import ReversiEnv, Player
 
 logger = getLogger(__name__)
 
 
 def start(config: Config):
-    tf_util.set_session_config(per_process_gpu_memory_fraction=0.65)
+    tf_util.set_session_config(per_process_gpu_memory_fraction=0.4, allow_growth=True)
     return OptimizeWorker(config).start()
 
 
@@ -69,6 +72,7 @@ class OptimizeWorker:
     def train_epoch(self, epochs, callbacks):
         tc = self.config.trainer
         state_ary, policy_ary, z_ary = self.dataset
+        #state_ary, policy_ary, z_ary = state_ary[0:10000], policy_ary[0:10000], z_ary[0:10000]
         self.model.model.fit(state_ary, [policy_ary, z_ary],
                              batch_size=tc.batch_size,
                              callbacks=callbacks,
@@ -77,7 +81,8 @@ class OptimizeWorker:
         return steps
 
     def compile_model(self):
-        self.optimizer = SGD(lr=1e-2, momentum=0.9)
+        #self.optimizer = SGD(lr=1e-2, momentum=0.9)
+        self.optimizer = Adam(lr=1e-3)
         losses = [objective_function_for_policy, objective_function_for_value]
         self.model.model.compile(optimizer=self.optimizer, loss=losses)
 
@@ -120,15 +125,46 @@ class OptimizeWorker:
         self.model.save(config_path, weight_path)
 
     def collect_all_loaded_data(self):
+        #cnt = 0
         state_ary_list, policy_ary_list, z_ary_list = [], [], []
-        for s_ary, p_ary, z_ary_ in self.loaded_data.values():
-            state_ary_list.append(s_ary)
-            policy_ary_list.append(p_ary)
-            z_ary_list.append(z_ary_)
+        # for s_ary, p_ary, z_ary_ in self.loaded_data.values():
+        #     state_ary_list.append(s_ary)
+        #     policy_ary_list.append(p_ary)
+        #     z_ary_list.append(z_ary_)
+        # state_ary = np.concatenate(state_ary_list)
+        # policy_ary = np.concatenate(policy_ary_list)
+        # z_ary = np.concatenate(z_ary_list)
 
-        state_ary = np.concatenate(state_ary_list)
-        policy_ary = np.concatenate(policy_ary_list)
-        z_ary = np.concatenate(z_ary_list)
+        policy_dict, z_dict = {}, {}
+        for s_ary, p_ary, z_ary in self.loaded_data.values():
+            #cnt += len(s_ary)
+            for i in range(len(s_ary)):
+                s = s_ary[i]
+                p = p_ary[i]
+                z = z_ary[i]
+                s_hashable = tuple(np.ndarray.flatten(s))
+                if not s_hashable in policy_dict:
+                    policy_dict[s_hashable] = []
+                    z_dict[s_hashable] = []
+                    state_ary_list.append(s)
+                policy_dict[s_hashable].append(p)
+                z_dict[s_hashable].append(z)
+        for s in state_ary_list:
+            s_hashable = tuple(np.ndarray.flatten(s))
+            policy_ary_list.append(sum(policy_dict[s_hashable]) / len(policy_dict[s_hashable]))
+            z_ary_list.append(sum(z_dict[s_hashable]) / len(z_dict[s_hashable]))
+
+        # a = np.zeros((2, 6, 7))
+        # a[0,5,3] = 1
+        # a[1,4,3] = 1
+        # a[0,3,3] = 1
+        # a[1,2,3] = 1
+        # s_hashable = tuple(np.ndarray.flatten(a))
+        # print(sum(policy_dict[s_hashable]) / len(policy_dict[s_hashable]), sum(z_dict[s_hashable]) / len(z_dict[s_hashable]))
+        state_ary = np.array(state_ary_list)
+        policy_ary = np.array(policy_ary_list)
+        z_ary = np.array(z_ary_list)
+        #print(len(state_ary), cnt, policy_ary.shape)
         return state_ary, policy_ary, z_ary
 
     @property
@@ -180,6 +216,7 @@ class OptimizeWorker:
             self.loaded_filenames.add(filename)
         except Exception as e:
             logger.warning(str(e))
+            raise
 
     def unload_data_of_file(self, filename):
         logger.debug(f"removing data about {filename} from training set")
@@ -199,8 +236,18 @@ class OptimizeWorker:
         policy_list = []
         z_list = []
         for state, policy, z in data:
-            own, enemy = bit_to_array(state[0], 64).reshape((8, 8)), bit_to_array(state[1], 64).reshape((8, 8))
-            state_list.append([own, enemy])
+            env = ReversiEnv()
+            board_data = env.get_antihash_board_data(state)
+            env = env.update(board_data, Player.black)
+            #own, enemy = bit_to_array(state[0], 64).reshape((8, 8)), bit_to_array(state[1], 64).reshape((8, 8))
+            ##own, enemy = Board.get_antihash_board(state[0]), Board.get_antihash_board(state[1])
+
+            #black_ary, white_ary = env.black_and_white_plane()
+            black, white = env.get_board_data()
+            black_ary, white_ary = np.array(black), np.array(white)
+
+            state = [black_ary, white_ary]
+            state_list.append(state)
             policy_list.append(policy)
             z_list.append(z)
 

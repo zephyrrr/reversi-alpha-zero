@@ -11,10 +11,11 @@ from keras.layers.convolutional import Conv2D
 from keras.layers.core import Activation, Dense, Flatten
 from keras.layers.merge import Add
 from keras.layers.normalization import BatchNormalization
-from keras.losses import mean_squared_error
+from keras.losses import mean_squared_error, categorical_crossentropy
 from keras.regularizers import l2
 
 from reversi_zero.config import Config
+from reversi_zero.env.reversi_env import Board
 
 logger = getLogger(__name__)
 
@@ -25,9 +26,10 @@ class ReversiModel:
         self.model = None  # type: Model
         self.digest = None
 
+
     def build(self):
         mc = self.config.model
-        in_x = x = Input((2, 8, 8))  # [own(8x8), enemy(8x8)]
+        in_x = x = Input((2, Board.height, Board.width))  # [own(8x8), enemy(8x8)]
 
         # (batch, channels, height, width)
         x = Conv2D(filters=mc.cnn_filter_num, kernel_size=mc.cnn_filter_size, padding="same",
@@ -45,7 +47,7 @@ class ReversiModel:
         x = Activation("relu")(x)
         x = Flatten()(x)
         # no output for 'pass'
-        policy_out = Dense(8*8, kernel_regularizer=l2(mc.l2_reg), activation="softmax", name="policy_out")(x)
+        policy_out = Dense(Board.n_labels, kernel_regularizer=l2(mc.l2_reg), activation="softmax", name="policy_out")(x)
 
         # for value output
         x = Conv2D(filters=1, kernel_size=1, data_format="channels_first", kernel_regularizer=l2(mc.l2_reg))(res_out)
@@ -102,8 +104,9 @@ class ReversiModel:
 
 
 def objective_function_for_policy(y_true, y_pred):
+    return categorical_crossentropy(y_true, y_pred)
     # can use categorical_crossentropy??
-    return K.sum(-y_true * K.log(y_pred + K.epsilon()), axis=-1)
+    #return K.sum(-y_true * K.log(y_pred + K.epsilon()), axis=-1)
 
 
 def objective_function_for_value(y_true, y_pred):

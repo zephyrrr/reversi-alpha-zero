@@ -6,13 +6,16 @@ import wx
 from wx.core import CommandEvent
 
 from reversi_zero.config import Config, GuiConfig, PlayWithHumanConfig
+from reversi_zero.env.reversi_env import Board
 from reversi_zero.env.reversi_env import Player
 from reversi_zero.play_game.game_model import PlayWithHuman, GameEvent
+from reversi_zero.lib import tf_util
 
 logger = getLogger(__name__)
 
 
 def start(config: Config):
+    tf_util.set_session_config(per_process_gpu_memory_fraction=0.2)
     PlayWithHumanConfig().update_play_config(config.play)
     reversi_model = PlayWithHuman(config)
     app = wx.App()
@@ -103,11 +106,11 @@ class Frame(wx.Frame):
         # calculate coordinate from window coordinate
         event_x, event_y = event.GetX(), event.GetY()
         w, h = self.panel.GetSize()
-        x = int(event_x / (w / 8))
-        y = int(event_y / (h / 8))
+        x = int(event_x / (w / Board.width))
+        y = int(event_y / (h / Board.height))
 
         if self.is_flip_vertical:
-            y = 7-y
+            y = Board.height-1-y
 
         if not self.model.available(x, y):
             return
@@ -118,12 +121,13 @@ class Frame(wx.Frame):
     def game_over(self):
         # if game is over then display dialog
 
-        black, white = self.model.number_of_black_and_white
-        mes = "black: %d\nwhite: %d\n" % (black, white)
-        if black == white:
-            mes += "** draw **"
-        else:
-            mes += "winner: %s" % ["black", "white"][black < white]
+        mes = self.model.env.get_game_result()
+        # black, white = self.model.number_of_black_and_white
+        # mes = "black: %d\nwhite: %d\n" % (black, white)
+        # if black == white:
+        #     mes += "** draw **"
+        # else:
+        #     mes += "winner: %s" % ["black", "white"][black < white]
         notify("game is over", mes)
         # elif self.reversi.passed != None:
         #     notify("passing turn", "pass")
@@ -144,27 +148,28 @@ class Frame(wx.Frame):
         dc.DrawRectangle(0, 0, w, h)
         # grid
         dc.SetBrush(wx.Brush("black"))
-        px, py = w / 8, h / 8
-        for y in range(8):
-            dc.DrawLine(y * px, 0, y * px, h)
+        px, py = w / Board.width, h / Board.height
+        for x in range(Board.width):
+            dc.DrawLine(x * px, 0, x * px, h)
+        for y in range(Board.height):
             dc.DrawLine(0, y * py, w, y * py)
         dc.DrawLine(w - 1, 0, w - 1, h - 1)
         dc.DrawLine(0, h - 1, w - 1, h - 1)
 
         # stones
         brushes = {Player.white: wx.Brush("white"), Player.black: wx.Brush("black")}
-        for y in range(8):
-            vy = 7-y if self.is_flip_vertical else y
-            for x in range(8):
+        for y in range(Board.height):
+            vy = Board.height-1-y if self.is_flip_vertical else y
+            for x in range(Board.width):
                 c = self.model.stone(x, y)
                 if c is not None:
                     dc.SetBrush(brushes[c])
                     dc.DrawEllipse(x * px, vy * py, px, py)
                 if self.model.last_history:
-                    q_value = self.model.last_history.values[y*8+x]
-                    n_value = self.model.last_history.visit[y*8+x]
-                    enemy_q_value = - self.model.last_history.enemy_values[y*8+x]
-                    enemy_n_value = self.model.last_history.enemy_visit[y*8+x]
+                    q_value = self.model.last_history.values[Board.to_n_label(x, y)]
+                    n_value = self.model.last_history.visit[Board.to_n_label(x, y)]
+                    enemy_q_value = - self.model.last_history.enemy_values[Board.to_n_label(x, y)]
+                    enemy_n_value = self.model.last_history.enemy_visit[Board.to_n_label(x, y)]
 
                     dc.SetTextForeground(wx.Colour("blue"))
                     if n_value:

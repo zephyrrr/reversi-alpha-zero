@@ -15,7 +15,7 @@ logger = getLogger(__name__)
 
 
 def start(config: Config):
-    tf_util.set_session_config(per_process_gpu_memory_fraction=0.2)
+    tf_util.set_session_config(per_process_gpu_memory_fraction=0.1, allow_growth=True)
     return EvaluateWorker(config).start()
 
 
@@ -69,6 +69,7 @@ class EvaluateWorker:
         best_player = ReversiPlayer(self.config, best_model, play_config=self.config.eval.play_config)
         ng_player = ReversiPlayer(self.config, ng_model, play_config=self.config.eval.play_config)
         best_is_black = random() < 0.5
+        #best_is_black = game_idx < self.config.eval.game_num // 2
         if best_is_black:
             black, white = best_player, ng_player
         else:
@@ -76,10 +77,11 @@ class EvaluateWorker:
 
         observation = env.observation
         while not env.done:
+            board_data = env.get_state_of_next_player()
             if env.next_player == Player.black:
-                action = black.action(observation.black, observation.white)
+                action = black.action(board_data)
             else:
-                action = white.action(observation.white, observation.black)
+                action = white.action(board_data)
             observation, info = env.step(action)
 
         ng_win = None
@@ -93,7 +95,7 @@ class EvaluateWorker:
                 ng_win = 1
             else:
                 ng_win = 0
-        return ng_win, best_is_black, observation.number_of_black_and_white
+        return ng_win, best_is_black, 0 #observation.number_of_black_and_white
 
     def load_best_model(self):
         model = ReversiModel(self.config)

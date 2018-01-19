@@ -4,8 +4,8 @@ from logging import getLogger
 from reversi_zero.agent.player import HistoryItem
 from reversi_zero.agent.player import ReversiPlayer
 from reversi_zero.config import Config
+from reversi_zero.env.reversi_env import Board
 from reversi_zero.env.reversi_env import Player, ReversiEnv
-from reversi_zero.lib.bitboard import find_correct_moves
 from reversi_zero.lib.model_helpler import load_best_model_weight, reload_newest_next_generation_model_if_changed
 from reversi_zero.play_game.common import load_model
 
@@ -57,36 +57,34 @@ class PlayWithHuman:
 
     def stone(self, px, py):
         """left top=(0, 0), right bottom=(7,7)"""
-        pos = int(py * 8 + px)
-        assert 0 <= pos < 64
-        bit = 1 << pos
-        if self.env.board.black & bit:
+        # pos = int(py * Board.width + px)
+        # assert 0 <= pos < Board.width * Board.height
+        # bit = 1 << pos
+        # if self.env.board.black & bit:
+        #     return Player.black
+        # elif self.env.board.white & bit:
+        #     return Player.white
+        # return None
+
+        if self.env.board.black[py][px]:
             return Player.black
-        elif self.env.board.white & bit:
+        elif self.env.board.white[py][px]:
             return Player.white
         return None
 
-    @property
-    def number_of_black_and_white(self):
-        return self.env.observation.number_of_black_and_white
-
     def available(self, px, py):
-        pos = int(py * 8 + px)
-        if pos < 0 or 64 <= pos:
+        pos = int(py * Board.width + px)
+        if pos < 0 or Board.width * Board.height <= pos:
             return False
-        own, enemy = self.env.board.black, self.env.board.white
-        if self.human_color == Player.white:
-            own, enemy = enemy, own
-        legal_moves = find_correct_moves(own, enemy)
-        return legal_moves & (1 << pos)
+        legal_moves = self.env.legal_moves()
+        #return legal_moves & (1 << pos)
+        return legal_moves[py][px]
 
     def move(self, px, py):
-        pos = int(py * 8 + px)
-        assert 0 <= pos < 64
-
+        pos = int(py * Board.width + px)
+        assert 0 <= pos < Board.width * Board.height
         if self.next_player != self.human_color:
             return False
-
         self.env.step(pos)
 
     def _load_model(self):
@@ -96,19 +94,44 @@ class PlayWithHuman:
         if self.next_player == self.human_color:
             return False
 
-        own, enemy = self.get_state_of_next_player()
-        action = self.ai.action(own, enemy)
+        board_data = self.env.get_state_of_next_player()
+        action = self.ai.action(board_data)
         self.env.step(action)
 
-        self.last_history = self.ai.ask_thought_about(own, enemy)
-        self.last_evaluation = self.last_history.values[self.last_history.action]
-        logger.debug(f"evaluation by ai={self.last_evaluation}")
+        self.last_history = self.ai.ask_thought_about(board_data)
+        env2 = ReversiEnv().update(board_data, Player.black)
+        key2 = self.ai.counter_key(env2)
+        if self.last_history:
+            self.last_evaluation = self.last_history.values[self.last_history.action]
+            logger.debug(f"evaluation by ai={self.last_evaluation}")
 
-    def get_state_of_next_player(self):
-        if self.next_player == Player.black:
-            own, enemy = self.env.board.black, self.env.board.white
-        else:
-            own, enemy = self.env.board.white, self.env.board.black
-        return own, enemy
+        return self.env.get_action_name(action)
+
+    def find_action_from_move(self, move):
+        for i in range(len(Board.labels)):
+            if Board.labels[i] == move:
+                return i
+        return None
+
+    def move_by_human(self):
+        board_data = self.env.get_state_of_next_player()
+        action = self.ai.action(board_data)
+        self.env.step(action)
+        return self.env.get_action_name(action)
 
 
+        import chess
+        action = None
+        while not action:
+            try:
+                move = input('\nEnter your move: ')
+                if chess.Move.from_uci(move) in self.env.board.board.legal_moves:
+                    action = self.find_action_from_move(move)
+                else:
+                    print("That is NOT a valid move :(.")
+                    print('legal moves: {0}'.format(list(self.env.board.board.legal_moves)))
+            except Exception as ex:
+                print(str(ex))
+
+        self.env.step(action)
+        return move

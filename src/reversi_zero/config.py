@@ -6,21 +6,28 @@ def _project_dir():
     return d(d(d(os.path.abspath(__file__))))
 
 
-def _data_dir():
-    return os.path.join(_project_dir(), "data")
+def _data_dir(config_type):
+    return os.path.join(_project_dir(), "data_" + config_type)
 
 
 class Config:
     def __init__(self, config_type="mini"):
         self.opts = Options()
-        self.resource = ResourceConfig()
+        self.resource = ResourceConfig(config_type)
         self.gui = GuiConfig()
         self.nboard = NBoardConfig()
 
+        self.config_type = config_type
         if config_type == "mini":
-            import reversi_zero.configs.mini as c
+            import reversi_zero.configs.mini_reversi as c
         elif config_type == "normal":
-            import reversi_zero.configs.normal as c
+            import reversi_zero.configs.normal_reversi as c
+        elif config_type == "tictactoe":
+            import reversi_zero.configs.normal_tictactoe as c
+        elif config_type == "connect4":
+            import reversi_zero.configs.normal_connect4 as c
+        elif config_type == "renju":
+            import reversi_zero.configs.normal_renju as c
         else:
             raise RuntimeError(f"unknown config_type: {config_type}")
         self.model = c.ModelConfig()
@@ -29,15 +36,40 @@ class Config:
         self.trainer = c.TrainerConfig()
         self.eval = c.EvaluateConfig()
 
+        create_env_py(config_type)
+
+
+def create_env_py(config_type):
+    slist = []
+    slist.append('from .base_env import Player, Winner')
+    if config_type == "mini" or config_type == "normal":
+        slist.append('from .reversi_env2 import ReversiEnv as ReversiEnv')
+        slist.append('from .reversi_env2 import ReversiBoard as Board')
+    elif config_type == "tictactoe":
+        slist.append('from .tictactoe_env import TicTacToeEnv as ReversiEnv')
+        slist.append('from .tictactoe_env import TicTacToeBoard as Board')
+    elif config_type == "connect4":
+        slist.append('from .connect4_env import Connect4Env as ReversiEnv')
+        slist.append('from .connect4_env import Connect4Board as Board')
+    elif config_type == "renju":
+        slist.append('from .renju_env import RenjuEnv as ReversiEnv')
+        slist.append('from .renju_env import RenjuBoard as Board')
+    else:
+        raise RuntimeError(f"unknown config_type: {config_type}")
+    fw = open(os.path.join(_project_dir(), "src/reversi_zero/env/reversi_env.py"), 'w')
+    for i in slist:
+        fw.write(i)
+        fw.write('\n')
+
 
 class Options:
     new = False
 
 
 class ResourceConfig:
-    def __init__(self):
+    def __init__(self, config_type=''):
         self.project_dir = os.environ.get("PROJECT_DIR", _project_dir())
-        self.data_dir = os.environ.get("DATA_DIR", _data_dir())
+        self.data_dir = os.environ.get("DATA_DIR", _data_dir(config_type))
         self.model_dir = os.environ.get("MODEL_DIR", os.path.join(self.data_dir, "model"))
         self.model_best_config_path = os.path.join(self.model_dir, "model_best_config.json")
         self.model_best_weight_path = os.path.join(self.model_dir, "model_best_weight.h5")
@@ -66,7 +98,7 @@ class ResourceConfig:
 class GuiConfig:
     def __init__(self):
         self.window_size = (400, 440)
-        self.window_title = "reversi-alpha-zero"
+        self.window_title = "reversi-alpha-zero-generic"
 
 
 class PlayWithHumanConfig:
