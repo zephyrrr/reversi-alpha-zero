@@ -29,7 +29,7 @@ logger = getLogger(__name__)
 
 
 class ReversiPlayer:
-    def __init__(self, config: Config, model, play_config=None, enable_resign=True, mtcs_info=None):
+    def __init__(self, config: Config, model, play_config=None, enable_resign=True, mtcs_info=None, use_pure_mcts=False):
         """
 
         :param config:
@@ -40,7 +40,9 @@ class ReversiPlayer:
         self.model = model
         self.play_config = play_config or self.config.play
         self.enable_resign = enable_resign
-        self.api = ReversiModelAPI(self.config, self.model)
+        self.use_pure_mcts = use_pure_mcts
+        if not use_pure_mcts:
+            self.api = ReversiModelAPI(self.config, self.model)
 
         # key=(board_data, action)
         mtcs_info = mtcs_info or self.create_mtcs_info()
@@ -59,6 +61,52 @@ class ReversiPlayer:
         self.thinking_history = {}  # for fun
         self.resigned = False
         self.requested_stop_thinking = False
+
+    @staticmethod
+    def rollout_policy_fn(legal_moves):
+        """rollout_policy_fn -- a coarse, fast version of policy_fn used in the rollout phase."""
+        # rollout randomly
+        legal_moves_arr = Board.to_n_labels(legal_moves)
+        action_probs = np.random.rand(Board.n_labels) * legal_moves_arr
+        return action_probs
+
+    @staticmethod
+    def policy_value_fn(legal_moves):
+        """a function that takes in a state and outputs a list of (action, probability)
+        tuples and a score for the state"""
+        # return uniform probabilities and 0 score for pure MCTS
+        legal_moves_arr = Board.to_n_labels(legal_moves)
+
+        legal_moves_list = [item for sublist in legal_moves for item in sublist]
+        len_legal = legal_moves_list.count(1)
+        action_probs = legal_moves_arr / len_legal
+
+        return action_probs
+
+    def _evaluate_rollout(self, env, limit=1000):
+        """Use the rollout policy to play until the end of the game, returning +1 if the current
+        player wins, -1 if the opponent wins, and 0 if it is a tie.
+        """
+        player = env.next_player
+        for i in range(limit):
+            if env.done:
+                break
+            action_probs = self.rollout_policy_fn(env.legal_moves())
+            action_t = int(np.argmax(action_probs))
+            env.step(action_t)
+        else:
+            # If no break from the loop, issue a warning.
+            print("WARNING: rollout reached move limit")
+        if not env.done:
+            return 0
+        if env.winner == Winner.draw:  # tie
+            return 0
+        elif env.winner == Winner.black and player == Player.black:
+            return 1
+        elif env.winner == Winner.white and player == Player.white:
+            return 1
+        else:
+            return -1
 
     @staticmethod
     def create_mtcs_info():
@@ -202,7 +250,10 @@ class ReversiPlayer:
 
         # is leaf?
         if key not in self.expanded:  # reach leaf node
-            leaf_v = await self.expand_and_evaluate(env)
+            if self.use_pure_mcts:
+                leaf_v = await self.expand_and_evaluate_pure(env)
+            else:
+                leaf_v = await self.expand_and_evaluate(env)
             if env.next_player == Player.black:
                 return leaf_v  # Value for black
             else:
@@ -224,6 +275,19 @@ class ReversiPlayer:
         self.var_n[key][action_t] += - virtual_loss + 1
         self.var_w[key][action_t] += virtual_loss_for_w + leaf_v
         return leaf_v
+
+    async def expand_and_evaluate_pure(self, env):
+        key = self.counter_key(env)
+        self.now_expanding.add(key)
+
+        env_saved = ReversiEnv().update(env.get_board_data(), env.next_player)
+        leaf_v = self._evaluate_rollout(env_saved)
+
+        leaf_p = self.policy_value_fn(env.legal_moves())
+        self.var_p[key] = leaf_p
+        self.expanded.add(key)
+        self.now_expanding.remove(key)
+        return float(leaf_v)
 
     #@profile
     async def expand_and_evaluate(self, env):
