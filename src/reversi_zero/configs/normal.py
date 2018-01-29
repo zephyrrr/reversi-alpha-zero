@@ -21,8 +21,9 @@ class PlayDataConfig:
 
 class PlayConfig:
     def __init__(self):
-        self.simulation_num_per_move = 100
+        self.simulation_num_per_move = 400
         self.share_mtcs_info_in_self_play = True
+        self.reset_mtcs_info_per_game = 10
         self.thinking_loop = 1
         self.logging_thinking = False
         self.c_puct = 1
@@ -41,6 +42,13 @@ class PlayConfig:
         self.false_positive_threshold = 0.05
         self.resign_threshold_delta = 0.01
 
+        #
+        self.schedule_of_simulation_num_per_move = [
+            (0, 8),
+            (300, 100),
+            (2000, 400),
+        ]
+
         # True means evaluating 'AlphaZero' method (disable 'eval' worker).
         # Please change to False if you want to evaluate 'AlphaGo Zero' method.
         self.use_newest_next_generation_model = True
@@ -48,7 +56,7 @@ class PlayConfig:
 
 class TrainerConfig:
     def __init__(self):
-        self.batch_size = 512  # 2048
+        self.batch_size = 256  # 2048
         self.min_data_size_to_learn = 100000
         self.epoch_to_checkpoint = 1
         self.start_total_steps = 0
@@ -57,8 +65,8 @@ class TrainerConfig:
         self.logging_per_steps = 100
         self.lr_schedules = [
             (0, 0.01),
-            (300000, 0.001),
-            (600000, 0.0001),
+            (150000, 0.001),
+            (300000, 0.0001),
         ]
 
 
