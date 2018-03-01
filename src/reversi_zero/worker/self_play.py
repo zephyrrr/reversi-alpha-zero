@@ -1,101 +1,191 @@
+import cProfile
 import os
-from collections import deque
+
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from logging import getLogger
 from multiprocessing import Manager
 from threading import Thread
 from time import time
-from random import random
+from traceback import print_stack
 
+
+import numpy as np
+from multiprocessing import Manager, Lock
+
+
+from reversi_zero.agent.api import MultiProcessReversiModelAPIServer
 from reversi_zero.agent.player import ReversiPlayer
 from reversi_zero.config import Config
 from reversi_zero.env.reversi_env import Board, Winner
 from reversi_zero.env.reversi_env import ReversiEnv, Player
 from reversi_zero.lib import tf_util
 from reversi_zero.lib.data_helper import get_game_data_filenames, write_game_data_to_file
-from reversi_zero.lib.model_helpler import load_best_model_weight, save_as_best_model, \
-    reload_best_model_weight_if_changed, reload_newest_next_generation_model_if_changed
+from reversi_zero.lib.file_util import read_as_int
+from reversi_zero.lib.ggf import convert_action_to_move, make_ggf_string
+from reversi_zero.lib.tensorboard_logger import TensorBoardLogger
 
 logger = getLogger(__name__)
 
 
 def start(config: Config):
-    tf_util.set_session_config(per_process_gpu_memory_fraction=0.1, allow_growth=True)
-    return SelfPlayWorker(config, env=ReversiEnv()).start()
+    tf_util.set_session_config(per_process_gpu_memory_fraction=0.3)
+    api_server = MultiProcessReversiModelAPIServer(config)
+    process_num = config.play_data.multi_process_num
+    api_server.start_serve()
+
+    with Manager() as manager:
+        shared_var = SharedVar(manager, game_idx=read_as_int(config.resource.self_play_game_idx_file) or 0)
+        with ProcessPoolExecutor(max_workers=process_num) as executor:
+            futures = []
+            for i in range(process_num):
+                play_worker = SelfPlayWorker(config, env=ReversiEnv(), api=api_server.get_api_client(),
+                                             shared_var=shared_var, worker_index=i)
+                futures.append(executor.submit(play_worker.start))
+
+
+class SharedVar:
+    def __init__(self, manager, game_idx: int):
+        """
+
+        :param Manager manager:
+        :param int game_idx:
+        """
+        self._lock = manager.Lock()
+        self._game_idx = manager.Value('i', game_idx)  # type: multiprocessing.managers.ValueProxy
+
+    @property
+    def game_idx(self):
+        return self._game_idx.value
+
+    def incr_game_idx(self, n=1):
+        with self._lock:
+            self._game_idx.value += n
+            return self._game_idx.value
 
 
 class SelfPlayWorker:
-    def __init__(self, config: Config, env=None, model=None):
+    def __init__(self, config: Config, env, api, shared_var, worker_index=0):
         """
 
         :param config:
         :param ReversiEnv|None env:
-        :param reversi_zero.agent.model.ReversiModel|None model:
+        :param ReversiModelAPI|None api:
+        :param SharedVar shared_var:
+        :param int worker_index:
         """
         self.config = config
-        self.model = model
         self.env = env
+        self.api = api
+        self.shared_var = shared_var
         self.black = None  # type: ReversiPlayer
         self.white = None  # type: ReversiPlayer
         self.buffer = []
         self.false_positive_count_of_resign = 0
         self.resign_test_game_count = 0
+        self.worker_index = worker_index
+        self.tensor_board = None  # type: TensorBoardLogger
+        self.move_history = None  # type: MoveHistory
+        self.move_history_buffer = []  # type: list[MoveHistory]
 
     def start(self):
-        if self.model is None:
-            self.model = self.load_model()
+        try:
+            self._start()
+        except Exception as e:
+            print(repr(e))
+            print_stack()
+
+    def _start(self):
+        logger.debug("SelfPlayWorker#start()")
+        np.random.seed(None)
+        worker_name = f"worker{self.worker_index:03d}"
+        self.tensor_board = TensorBoardLogger(os.path.join(self.config.resource.self_play_log_dir, worker_name))
 
         self.buffer = []
-        idx = 1
         mtcs_info = None
+        local_idx = 0
 
         while True:
+            np.random.seed(None)
+            local_idx += 1
+            game_idx = self.shared_var.game_idx
+
             start_time = time()
             if mtcs_info is None and self.config.play.share_mtcs_info_in_self_play:
                 mtcs_info = ReversiPlayer.create_mtcs_info()
-            env = self.start_game(idx, mtcs_info)
+
+            # play game
+            env = self.start_game(local_idx, game_idx, mtcs_info)
+
+            game_idx = self.shared_var.incr_game_idx()
+            # just log
             end_time = time()
-            logger.debug(f"play game {idx} time={end_time - start_time} sec, "
+            time_spent = end_time - start_time
+            logger.debug(f"play game {game_idx} time={time_spent} sec, "
                          f"turn={env.turn}:{env.board.number_of_black_and_white}:{env.winner}")
 
+            # log play info to tensor board
+            prefix = "self"
+            log_info = {f"{prefix}/time": time_spent, f"{prefix}/turn": env.turn}
+            if mtcs_info:
+                log_info[f"{prefix}/mcts_buffer_size"] = len(mtcs_info.var_p)
+            self.tensor_board.log_scaler(log_info, game_idx)
 
-            if self.config.play.use_newest_next_generation_model:
-                model_changed = reload_newest_next_generation_model_if_changed(self.model, clear_session=True)
-            else:
-                model_changed = reload_best_model_weight_if_changed(self.model, clear_session=True)
-
-            if model_changed:
+            # reset MCTS info per X games
+            if self.config.play.reset_mtcs_info_per_game and local_idx % self.config.play.reset_mtcs_info_per_game == 0:
+                logger.debug("reset MCTS info")
                 mtcs_info = None
 
-            idx += 1
+            with open(self.config.resource.self_play_game_idx_file, "wt") as f:
+                f.write(str(game_idx))
 
+    def start_game(self, local_idx, last_game_idx, mtcs_info):
+        # profiler = cProfile.Profile()
+        # profiler.enable()
 
-    def start_game(self, idx):
         self.env.reset()
         enable_resign = self.config.play.disable_resignation_rate <= random()
-        self.black = ReversiPlayer(self.config, self.model, enable_resign=enable_resign, mtcs_info=mtcs_info)
-        self.white = ReversiPlayer(self.config, self.model, enable_resign=enable_resign, mtcs_info=mtcs_info)
-        #self.black.reset(enable_resign)
-        #self.white.reset(enable_resign)
-        #if not enable_resign:
-        #    logger.debug("Resignation is disabled in the next game.")
+        self.config.play.simulation_num_per_move = self.decide_simulation_num_per_move(last_game_idx)
+        logger.debug(f"simulation_num_per_move = {self.config.play.simulation_num_per_move}")
+        self.black = self.create_reversi_player(enable_resign=enable_resign, mtcs_info=mtcs_info)
+        self.white = self.create_reversi_player(enable_resign=enable_resign, mtcs_info=mtcs_info)
+        if not enable_resign:
+            logger.debug("Resignation is disabled in the next game.")
         observation = self.env.observation  # type: Board
+        self.move_history = MoveHistory()
+
+        # game loop
         while not self.env.done:
             if self.env.next_player == Player.black:
-                action = self.black.action(self.env.get_board_data(False))
+                action = self.black.action_with_evaluation(self.env.get_board_data(False))
             else:
-                action = self.white.action(self.env.get_board_data(True))
-            observation, info = self.env.step(action)
+                action = self.white.action_with_evaluation(self.env.get_board_data(True))
+            self.move_history.move(self.env, action)
+            observation, info = self.env.step(action.action)
+
         self.finish_game(resign_enabled=enable_resign)
-        self.save_play_data(write=idx % self.config.play_data.nb_game_in_file == 0)
+        self.save_play_data(write=local_idx % self.config.play_data.nb_game_in_file == 0)
         self.remove_play_data()
+
+        if self.config.play_data.enable_ggf_data:
+            is_write = local_idx % self.config.play_data.nb_game_in_ggf_file == 0
+            is_write |= local_idx <= 5
+            self.save_ggf_data(write=is_write)
+
+        # profiler.disable()
+        # profiler.dump_stats(f"profile-worker-{self.worker_index}-{local_idx}")
         return self.env
 
+    def create_reversi_player(self, enable_resign=None, mtcs_info=None):
+        return ReversiPlayer(self.config, None, enable_resign=enable_resign, mtcs_info=mtcs_info, api=self.api)
+
     def save_play_data(self, write=True):
-        data = self.black.moves + self.white.moves
-        self.buffer += data
-        if not write:
+        # drop draw game by drop_draw_game_rate
+        if self.black.moves[0][-1] != 0 or self.config.play_data.drop_draw_game_rate <= np.random.random():
+            data = self.black.moves + self.white.moves
+            self.buffer += data
+
+        if not write or not self.buffer:
             return
 
         rc = self.config.resource
@@ -105,12 +195,28 @@ class SelfPlayWorker:
         write_game_data_to_file(path, self.buffer)
         self.buffer = []
 
+    def save_ggf_data(self, write=True):
+        self.move_history_buffer.append(self.move_history)
+        if not write:
+            return
+
+        rc = self.config.resource
+        game_id = datetime.now().strftime("%Y%m%d-%H%M%S.%f")
+        path = os.path.join(rc.self_play_ggf_data_dir, rc.ggf_filename_tmpl % game_id)
+        with open(path, "wt") as f:
+            for mh in self.move_history_buffer:
+                f.write(mh.make_ggf_string("RAZ", "RAZ") + "\n")
+        self.move_history_buffer = []
+
     def remove_play_data(self):
         files = get_game_data_filenames(self.config.resource)
         if len(files) < self.config.play_data.max_file_num:
             return
-        for i in range(len(files) - self.config.play_data.max_file_num):
-            os.remove(files[i])
+        try:
+            for i in range(len(files) - self.config.play_data.max_file_num):
+                os.remove(files[i])
+        except:
+            pass
 
     def finish_game(self, resign_enabled=True):
         if self.env.winner == Winner.black:
@@ -134,21 +240,6 @@ class SelfPlayWorker:
                 logger.debug("false positive of resignation happened")
             self.check_and_update_resignation_threshold()
 
-    def load_model(self):
-        from reversi_zero.agent.model import ReversiModel
-        model = ReversiModel(self.config)
-        loaded = False
-        if not self.config.opts.new:
-            if self.config.play.use_newest_next_generation_model:
-                loaded = reload_newest_next_generation_model_if_changed(model) or load_best_model_weight(model)
-            else:
-                loaded = load_best_model_weight(model) or reload_newest_next_generation_model_if_changed(model)
-
-        if not loaded:
-            model.build()
-            save_as_best_model(model)
-        return model
-
     def reset_false_positive_count(self):
         self.false_positive_count_of_resign = 0
         self.resign_test_game_count = 0
@@ -170,3 +261,42 @@ class SelfPlayWorker:
             self.config.play.resign_threshold += self.config.play.resign_threshold_delta
         logger.debug(f"update resign_threshold: {old_threshold} -> {self.config.play.resign_threshold}")
         self.reset_false_positive_count()
+
+    def decide_simulation_num_per_move(self, idx):
+        ret = read_as_int(self.config.resource.force_simulation_num_file)
+
+        if ret:
+            logger.debug(f"loaded simulation num from file: {ret}")
+            return ret
+
+        for min_idx, num in self.config.play.schedule_of_simulation_num_per_move:
+            if idx >= min_idx:
+                ret = num
+        return ret
+
+
+class MoveHistory:
+    def __init__(self):
+        self.moves = []
+
+    def move(self, env, action):
+        """
+
+        :param ReversiEnv env:
+        :param ActionWithEvaluation action:
+        :return:
+        """
+        if action.action is None:
+            return  # resigned
+
+        if len(self.moves) % 2 == 0:
+            if env.next_player == Player.white:
+                self.moves.append(convert_action_to_move(None))
+        else:
+            if env.next_player == Player.black:
+                self.moves.append(convert_action_to_move(None))
+        move = f"{convert_action_to_move(action.action)}/{action.q*10}/{action.n}"
+        self.moves.append(move)
+
+    def make_ggf_string(self, black_name=None, white_name=None):
+        return make_ggf_string(black_name=black_name, white_name=white_name, moves=self.moves)

@@ -208,7 +208,7 @@ Challenge 5 (AlphaZero Method)
 * RAZ: this model (Reversi Alpha Zero)
 * "RAZ:10" means "RAZ depth 10". depth N means sim_per_move=N*20 
 
-I usually evaluate with RAZ:20.
+I usually evaluate with RAZ:20. (win, lose, draw).
 
 |date|note|
 |:---:|---|
@@ -220,4 +220,53 @@ I usually evaluate with RAZ:20.
 |2018/01/25|Ntest LV1(16, 3, 1), LV2(6, 4, 0), LV3(8, 12, 0), LV4(1, 9, 0), LV5(2, 17, 1), change lr from 0.001 to 0.0001 around 540k steps|
 |2018/01/26|Ntest LV1(18, 2, 0), LV3(9, 9, 2), LV5(0, 20, 0)|
 |2018/01/27|Ntest LV1(17, 1, 2), LV3(4, 15, 1), LV5(1, 18, 1)|
-|2018/01/28|Ntest LV1(8, 2, 0), LV3(2, 8, 0), LV5(2, 8, 0), change lr from 0.0001 to 0.001 around 800k steps, to 0.0005 around 820k steps|
+|2018/01/28|Ntest LV1(16, 4, 0), LV3(2, 8, 0), LV5(2, 8, 0), change lr from 0.0001 to 0.001 around 800k steps, to 0.0005 around 820k steps, start multiprocess selfplay|
+|2018/01/29|change lr from 0.0005 to 0.001 around 853k steps, Ntest LV1(9, 1, 0), LV3(8, 2, 0), LV5(2, 8, 0)|
+|2018/01/30|Ntest LV1(10, 0, 0), LV3(17, 12, 1), LV5(8, 21, 1)|
+|2018/01/31|Ntest LV3(20, 9, 1), LV5(6, 22, 2)|
+|2018/02/01|Ntest LV3(23, 6, 1), LV5(12, 15, 3), LV7(1, 8, 1), LV9(2, 8, 0), LV11(1, 8, 1), LV13(0, 10, 0)|
+|2018/02/02|Ntest LV3(24, 5, 1), LV5(8, 22, 0), LV7(5, 24, 1), change lr from 0.001 to 0.0001 around 1010k steps|
+|2018/02/03|Ntest LV3(10, 0, 0), LV5(5, 4, 1), LV7(1, 8, 1), increase sharing MCTS info among games|
+|2018/02/04|Ntest LV3(10, 0, 0), LV5(12, 6, 2), LV7(6, 12, 2), LV9(3, 7, 0), decay policy, change the exit logic of sim loop|
+|2018/02/05|Ntest LV5(10, 8, 2), LV7(6, 13, 1), LV9(9, 11, 0)|
+|2018/02/06|Ntest LV5(16, 3, 1), LV7(12, 8, 0), LV9(2, 17, 1)|
+|2018/02/07|Ntest LV5(15, 5, 0), LV7(11, 7, 2), LV9(5, 15, 0), LV11(1, 8, 1), LV13(1, 9, 0)|
+|2018/02/08|Ntest LV7(14, 5, 1), LV9(3, 17, 0), LV11(3, 13, 4)|
+|2018/02/09|Ntest LV5(7, 3, 0), LV7(12, 7, 1), LV9(3, 6, 1), LV11(2, 18, 0), there is big winning percentage difference between black and white. |
+|2018/02/10|Ntest LV5(13, 3, 4), LV7(20, 9, 1), LV9(10, 14, 6), LV11(17, 13, 0), LV13(4, 5, 1)|
+|2018/02/11|Ntest LV7(18, 2, 0), LV9(6, 13, 1), LV11(6, 13, 1), LV13(2, 16, 3). start using solver. not estimate but calculate. It is no longer pure AlphaZero way!|
+|2018/02/12|Ntest LV7(10, 0, 0), LV9(16, 14, 0), LV11(6, 12, 2), LV13(6, 10, 4), change `change_tau_turn` from 3 to 4.|
+|2018/02/13|Ntest LV9(11, 8, 1), LV11(5, 12, 4), LV13(4, 13, 3)|
+
+There are many draw games(more than 70%) in self-play.
+However, it seems that the model does not become weak now.
+Many draw games, but there are variety of draw games.
+I changed reset_mtcs_info_per_game from 5 to 1.
+
+<img width="50%" src="doc/img/20180214_winner_counts.png">
+
+I think there is possibility that the model will be collapsed, I will continue because it is interesting.
+
+|date|note|
+|:---:|---|
+|2018/02/14|Ntest LV5(9, 0, 1) LV7(10, 0, 0), LV9(23, 11, 6), LV11(8, 23, 9), LV13(7, 28, 5), LV15(0, 9, 1)|
+|2018/02/15|Ntest LV7(12, 6, 2), LV9(12, 14, 4), LV11(10, 15, 5), LV13(14, 15, 1)|
+|2018/02/16|Ntest LV7(17, 3, 0), LV9(11, 9, 0), LV11(7, 10, 3), LV13(3, 14, 2)|
+|2018/02/17|Ntest LV9(10, 6, 4), LV11(8, 11, 1), LV13(2, 17, 1)|
+|2018/02/18|Ntest LV5(9, 0, 1), LV7(6, 2, 2), LV9(10, 0, 0), LV11(3, 4, 3), LV13(2, 6, 2), LV15(1, 9, 0)|
+|2018/02/19|Ntest LV9(20, 7, 3), LV11(16, 11, 3), LV13(5, 18, 7)|
+|2018/02/20|Ntest LV9(5, 5, 0), LV11(6, 3, 1), LV13(1, 8, 1), LV15(0, 9, 1)|
+|2018/02/20:2|Ntest LV9(0, 9, 1), LV11(3, 5, 2), LV13(4, 6, 0), LV15(2, 8, 0)|
+|2018/02/21|Ntest LV7(15, 5, 0), LV9(5, 12, 3), LV11(12, 6, 2), LV13(2, 18, 0), LV15(1, 17, 2), change max_file_num from 800 to 2000|
+|2018/02/22|Ntest LV9(9, 8, 3), LV11(8, 10, 2), LV13(5, 13, 2)|
+|2018/02/23|Ntest LV9(9, 10, 1), LV11(12, 6, 2), LV13(0, 18, 2), fix dirichlet noise bug|
+|2018/02/24|Ntest LV9(15, 4, 1), LV11(11, 5, 4), LV13(0, 14, 6)|
+|2018/02/24|Ntest LV9(7, 2, 1), LV11(6, 4, 0), LV13(1, 8, 1), set delete_self_play_after_number_of_training=1, change batch size from 256 to 8|
+|2018/02/26|Ntest LV7(3, 7, 0), LV9(5, 5, 0), LV11(1, 8, 1), LV13(2, 8, 0)|
+|2018/02/27|Ntest LV7(9, 0, 1), LV9(5, 1, 4), LV11(5, 3, 2), LV13(5, 5, 0), change batch size from 8 to 32 to 16|
+|2018/02/28|Ntest LV9(6, 0, 4), LV11(3, 6, 1), LV13(5, 5, 0)|
+
+
+### loss graph
+
+<img src="doc/img/ch5_loss.png">

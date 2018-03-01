@@ -1,7 +1,8 @@
 import os
+from collections import Counter
 from datetime import datetime
 from logging import getLogger
-from time import sleep
+from time import sleep, time
 
 import keras.backend as K
 import numpy as np
@@ -35,6 +36,7 @@ class OptimizeWorker:
         self.model = None  # type: ReversiModel
         self.loaded_filenames = set()
         self.loaded_data = {}
+        self.training_count_of_files = Counter()
         self.dataset = None
         self.optimizer = None
 
@@ -45,7 +47,8 @@ class OptimizeWorker:
     def training(self):
         self.compile_model()
         total_steps = self.config.trainer.start_total_steps
-        save_model_callback = PerStepCallback(self.config.trainer.save_model_steps, self.save_current_model)
+        save_model_callback = PerStepCallback(self.config.trainer.save_model_steps, self.save_current_model,
+                                              self.config.trainer.wait_after_save_model_ratio)
         callbacks = [save_model_callback]  # type: list[Callback]
         tb_callback = None  # type: TensorBoardStepCallback
 
@@ -61,10 +64,11 @@ class OptimizeWorker:
             self.load_play_data()
             if self.dataset_size < self.config.trainer.min_data_size_to_learn:
                 logger.info(f"dataset_size={self.dataset_size} is less than {self.config.trainer.min_data_size_to_learn}")
-                sleep(60)
+                sleep(10)
                 continue
             self.update_learning_rate(total_steps)
             total_steps += self.train_epoch(self.config.trainer.epoch_to_checkpoint, callbacks)
+            self.count_up_training_count_and_delete_self_play_data_files()
 
         if tb_callback:  # This code is never reached. But potentially this is required.
             tb_callback.close()
@@ -127,13 +131,19 @@ class OptimizeWorker:
     def collect_all_loaded_data(self):
         #cnt = 0
         state_ary_list, policy_ary_list, z_ary_list = [], [], []
+
         # for s_ary, p_ary, z_ary_ in self.loaded_data.values():
         #     state_ary_list.append(s_ary)
         #     policy_ary_list.append(p_ary)
         #     z_ary_list.append(z_ary_)
-        # state_ary = np.concatenate(state_ary_list)
-        # policy_ary = np.concatenate(policy_ary_list)
-        # z_ary = np.concatenate(z_ary_list)
+
+        # if state_ary_list:
+        #     state_ary = np.concatenate(state_ary_list)
+        #     policy_ary = np.concatenate(policy_ary_list)
+        #     z_ary = np.concatenate(z_ary_list)
+        #     return state_ary, policy_ary, z_ary
+        # else:
+        #     return None
 
         policy_dict, z_dict = {}, {}
         for s_ary, p_ary, z_ary in self.loaded_data.values():
@@ -223,6 +233,23 @@ class OptimizeWorker:
         self.loaded_filenames.remove(filename)
         if filename in self.loaded_data:
             del self.loaded_data[filename]
+        if filename in self.training_count_of_files:
+            del self.training_count_of_files[filename]
+
+    def count_up_training_count_and_delete_self_play_data_files(self):
+        limit = self.config.trainer.delete_self_play_after_number_of_training
+        if not limit:
+            return
+
+        for filename in self.loaded_filenames:
+            self.training_count_of_files[filename] += 1
+            if self.training_count_of_files[filename] >= limit:
+                if os.path.exists(filename):
+                    try:
+                        logger.debug(f"remove {filename}")
+                        os.remove(filename)
+                    except Exception as e:
+                        logger.warning(e)
 
     @staticmethod
     def convert_to_training_data(data):
@@ -255,13 +282,24 @@ class OptimizeWorker:
 
 
 class PerStepCallback(Callback):
-    def __init__(self, per_step, callback):
+    def __init__(self, per_step, callback, wait_after_save_model_ratio=None):
         super().__init__()
         self.per_step = per_step
         self.step = 0
         self.callback = callback
+        self.wait_after_save_model_ratio = wait_after_save_model_ratio
+        self.last_wait_time = time()
 
     def on_batch_end(self, batch, logs=None):
         self.step += 1
         if self.step % self.per_step == 0:
             self.callback()
+            self.wait()
+
+    def wait(self):
+        if self.wait_after_save_model_ratio:
+            time_spent = time() - self.last_wait_time
+            logger.debug(f"start sleeping {time_spent} seconds")
+            sleep(time_spent * self.wait_after_save_model_ratio)
+            logger.debug(f"finish sleeping")
+            self.last_wait_time = time()

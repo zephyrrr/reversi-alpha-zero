@@ -16,7 +16,7 @@ logger = getLogger(__name__)
 
 def start(config: Config):
     tf_util.set_session_config(per_process_gpu_memory_fraction=0.2)
-    PlayWithHumanConfig().update_play_config(config.play)
+    config.play_with_human.update_play_config(config.play)
     reversi_model = PlayWithHuman(config)
     app = wx.App()
     Frame(reversi_model, config.gui).Show()

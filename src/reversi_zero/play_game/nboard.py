@@ -21,12 +21,14 @@ HintResponse = namedtuple("HintResponse", "action value visit")
 
 
 def start(config: Config):
-    PlayWithHumanConfig().update_play_config(config.play)
+    config.play_with_human.update_play_config(config.play)
     root_logger = getLogger()
     for h in root_logger.handlers:
         if isinstance(h, StreamHandler) and not isinstance(h, FileHandler):
             root_logger.removeHandler(h)
-    return NBoardEngine(config).start()
+    logger.info(f"config type={config.type}")
+    NBoardEngine(config).start()
+    logger.info("finish nboard")
 
 
 class NBoardEngine:
@@ -50,7 +52,7 @@ class NBoardEngine:
     def start(self):
         self.running = True
         self.reader.start(push_callback=self.push_callback)
-        while self.running:
+        while self.running and not self.reader.closed:
             message = self.reader.readline(self.nc.read_stdin_timeout)
             if message is None:
                 continue
@@ -77,8 +79,14 @@ class NBoardEngine:
     def set_depth(self, n):
         try:
             n = int(n)
-            self.play_config.simulation_num_per_move = n * self.nc.simulation_num_per_depth_about
-            logger.info(f"set simulation_num_per_move to {self.play_config.simulation_num_per_move}")
+            # self.play_config.simulation_num_per_move = n * self.nc.simulation_num_per_depth_about
+            self.play_config.required_visit_to_decide_action = n * self.nc.simulation_num_per_depth_about
+            self.play_config.thinking_loop = min(
+                30,
+                int(self.play_config.required_visit_to_decide_action * 5 / self.play_config.simulation_num_per_move)
+            )
+
+            logger.info(f"set required_visit_to_decide_action to {self.play_config.required_visit_to_decide_action}")
         except ValueError:
             pass
 
@@ -175,7 +183,7 @@ class NBoardProtocolVersion2:
     def nboard(self, version):
         if version != "2":
             logger.warning(f"UNKNOWN NBoard Version {version}!!!")
-        self.engine.reply(f"set myname {self.config.nboard.my_name}")
+        self.engine.reply(f"set myname {self.config.nboard.my_name}({self.config.type})")
         self.tell_status("waiting")
 
     def set_depth(self, depth):
